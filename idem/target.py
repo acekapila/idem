@@ -47,9 +47,16 @@ class OpenAITarget:
     `base_url` is set.
     """
 
-    def __init__(self, model_id: str, api_key: str | None = None, base_url: str | None = None):
+    def __init__(
+        self,
+        model_id: str,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        system_prompt: str | None = None,
+    ):
         self.model_id = model_id
         self.base_url = base_url
+        self.system_prompt = system_prompt
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not self._api_key:
             if base_url:
@@ -68,12 +75,14 @@ class OpenAITarget:
                 "install it with `pip install idem-check[openai]`"
             ) from exc
 
+        messages = []
+        if self.system_prompt:
+            messages.append({"role": "system", "content": self.system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
         client = OpenAI(api_key=self._api_key, base_url=self.base_url)
         try:
-            response = client.chat.completions.create(
-                model=self.model_id,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            response = client.chat.completions.create(model=self.model_id, messages=messages)
         except Exception as exc:  # SDK raises various API/network errors
             raise TargetError(f"OpenAI API call failed: {exc}") from exc
 
@@ -84,9 +93,16 @@ class OpenAITarget:
 
 
 class AnthropicTarget:
-    def __init__(self, model_id: str, api_key: str | None = None, max_tokens: int = 1024):
+    def __init__(
+        self,
+        model_id: str,
+        api_key: str | None = None,
+        max_tokens: int = 1024,
+        system_prompt: str | None = None,
+    ):
         self.model_id = model_id
         self.max_tokens = max_tokens
+        self.system_prompt = system_prompt
         self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if not self._api_key:
             raise TargetError(
@@ -103,12 +119,15 @@ class AnthropicTarget:
             ) from exc
 
         client = Anthropic(api_key=self._api_key)
+        kwargs: dict[str, Any] = {
+            "model": self.model_id,
+            "max_tokens": self.max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if self.system_prompt:
+            kwargs["system"] = self.system_prompt
         try:
-            response = client.messages.create(
-                model=self.model_id,
-                max_tokens=self.max_tokens,
-                messages=[{"role": "user", "content": prompt}],
-            )
+            response = client.messages.create(**kwargs)
         except Exception as exc:  # SDK raises various API/network errors
             raise TargetError(f"Anthropic API call failed: {exc}") from exc
 
@@ -264,9 +283,13 @@ def create_target(model_config: ModelConfig) -> ModelTarget:
         )
 
     if model_config.provider == "openai":
-        return OpenAITarget(model_config.model_id, base_url=model_config.base_url)
+        return OpenAITarget(
+            model_config.model_id,
+            base_url=model_config.base_url,
+            system_prompt=model_config.system_prompt,
+        )
     if model_config.provider == "anthropic":
-        return AnthropicTarget(model_config.model_id)
+        return AnthropicTarget(model_config.model_id, system_prompt=model_config.system_prompt)
     if model_config.provider == "custom":
         assert model_config.endpoint is not None  # guaranteed by validate_raw_config
         return CustomHTTPTarget(model_config.endpoint)

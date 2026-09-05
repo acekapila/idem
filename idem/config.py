@@ -69,6 +69,7 @@ class ModelConfig:
     model_id: str
     base_url: str | None = None  # openai only: point at a self-hosted, OpenAI-compatible server
     endpoint: dict[str, Any] | None = None  # custom only: how to call the REST API
+    system_prompt: str | None = None  # openai/anthropic only: pin the agent's persona/policy text
 
 
 @dataclass
@@ -204,6 +205,15 @@ def validate_raw_config(raw: Any) -> list[str]:
         elif provider == "custom":
             errors.extend(_validate_endpoint(model.get("endpoint")))
 
+        if provider in ("openai", "anthropic") and "system_prompt" in model:
+            if not isinstance(model["system_prompt"], str):
+                errors.append("'model.system_prompt' must be a string")
+        elif provider == "custom" and "system_prompt" in model:
+            errors.append(
+                "'model.system_prompt' is not used with provider 'custom' — "
+                "build the system message directly into 'model.endpoint.request_template'"
+            )
+
     questions = raw.get("questions")
     if questions is None:
         errors.append("missing required top-level field 'questions'")
@@ -271,6 +281,7 @@ def load_config(path: str | Path) -> Config:
         model_id=str(raw_model["model_id"]),
         base_url=raw_model.get("base_url"),
         endpoint=raw_model.get("endpoint"),
+        system_prompt=raw_model.get("system_prompt"),
     )
     questions = [
         Question(id=q["id"], prompt=q["prompt"], checks=q["checks"])

@@ -180,6 +180,40 @@ place for per-vendor parsing logic.
 See [`examples/custom_endpoint_golden_set.yaml`](examples/custom_endpoint_golden_set.yaml)
 for both options side by side.
 
+## Testing an agent (base model + system prompt)
+
+Most production "customer-facing AI agents" aren't fine-tuned models at
+all — they're a general-purpose model plus a fixed system prompt that
+encodes the persona, policies, and facts. Idem supports this directly with
+`system_prompt` on the `openai` or `anthropic` provider:
+
+```yaml
+model:
+  provider: openai
+  model_id: gpt-4o-mini-2024-07-18
+  system_prompt: |
+    You are a customer service representative for Acme Bank. Answer
+    questions using only these facts:
+    - Standard variable interest rate: 5.00% p.a. (comparison rate 5.24% p.a.)
+    - Complaints: email complaints@acmebank.example, phone 1800-000-000,
+      or written complaint to PO Box 1, Sydney NSW 2000.
+
+questions:
+  - id: interest_rate_disclosure
+    prompt: "What is the current standard variable interest rate?"
+    checks:
+      - type: contains
+        value: "5.00%"
+```
+
+This is arguably the more realistic drift scenario to test for: the system
+prompt in your YAML never changes, but if the model underneath
+`gpt-4o-mini-2024-07-18` is ever silently retrained or swapped, its
+adherence to that same fixed prompt can still shift — which is exactly
+what idem is built to catch. (`system_prompt` isn't used with `provider:
+custom` — build the system message directly into `endpoint.request_template`
+there, since you already control the full request shape.)
+
 ## Check-type reference
 
 Every check is a pure, independently-tested function:

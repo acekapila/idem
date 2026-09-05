@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from idem.target import (
+    AnthropicTarget,
     CustomHTTPTarget,
     OpenAITarget,
     TargetError,
@@ -195,3 +196,147 @@ class TestCustomHTTPTarget:
         )
         assert target.method == "POST"
         assert target.timeout == 30
+
+
+class TestOpenAITargetSystemPrompt:
+    def test_call_includes_system_message_when_set(self, monkeypatch):
+        import openai
+
+        captured = {}
+
+        class FakeMessage:
+            content = "The rate is 5.00% p.a."
+
+        class FakeChoice:
+            message = FakeMessage()
+
+        class FakeResponse:
+            choices = [FakeChoice()]
+
+        class FakeCompletions:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return FakeResponse()
+
+        class FakeChat:
+            completions = FakeCompletions()
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                pass
+
+            chat = FakeChat()
+
+        monkeypatch.setattr(openai, "OpenAI", FakeClient)
+
+        target = OpenAITarget(
+            "gpt-4o-2024-08-06", api_key="test-key", system_prompt="You are a bank representative."
+        )
+        result = target.call("What is the rate?")
+
+        assert result == "The rate is 5.00% p.a."
+        assert captured["messages"][0] == {"role": "system", "content": "You are a bank representative."}
+        assert captured["messages"][1] == {"role": "user", "content": "What is the rate?"}
+
+    def test_call_without_system_prompt_sends_only_user_message(self, monkeypatch):
+        import openai
+
+        captured = {}
+
+        class FakeMessage:
+            content = "ok"
+
+        class FakeChoice:
+            message = FakeMessage()
+
+        class FakeResponse:
+            choices = [FakeChoice()]
+
+        class FakeCompletions:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return FakeResponse()
+
+        class FakeChat:
+            completions = FakeCompletions()
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                pass
+
+            chat = FakeChat()
+
+        monkeypatch.setattr(openai, "OpenAI", FakeClient)
+
+        target = OpenAITarget("gpt-4o-2024-08-06", api_key="test-key")
+        target.call("hi")
+
+        assert captured["messages"] == [{"role": "user", "content": "hi"}]
+
+
+class TestAnthropicTargetSystemPrompt:
+    def test_call_includes_system_param_when_set(self, monkeypatch):
+        import anthropic
+
+        captured = {}
+
+        class FakeBlock:
+            type = "text"
+            text = "The rate is 5.00% p.a."
+
+        class FakeResponse:
+            content = [FakeBlock()]
+
+        class FakeMessages:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return FakeResponse()
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                pass
+
+            messages = FakeMessages()
+
+        monkeypatch.setattr(anthropic, "Anthropic", FakeClient)
+
+        target = AnthropicTarget(
+            "claude-3-5-sonnet-20241022",
+            api_key="test-key",
+            system_prompt="You are a bank representative.",
+        )
+        result = target.call("What is the rate?")
+
+        assert result == "The rate is 5.00% p.a."
+        assert captured["system"] == "You are a bank representative."
+        assert captured["messages"] == [{"role": "user", "content": "What is the rate?"}]
+
+    def test_call_without_system_prompt_omits_system_param(self, monkeypatch):
+        import anthropic
+
+        captured = {}
+
+        class FakeBlock:
+            type = "text"
+            text = "ok"
+
+        class FakeResponse:
+            content = [FakeBlock()]
+
+        class FakeMessages:
+            def create(self, **kwargs):
+                captured.update(kwargs)
+                return FakeResponse()
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                pass
+
+            messages = FakeMessages()
+
+        monkeypatch.setattr(anthropic, "Anthropic", FakeClient)
+
+        target = AnthropicTarget("claude-3-5-sonnet-20241022", api_key="test-key")
+        target.call("hi")
+
+        assert "system" not in captured

@@ -257,3 +257,59 @@ class TestLoadConfig:
         path.write_text("model: [unterminated\n")
         with pytest.raises(ConfigError):
             load_config(path)
+
+    def test_load_config_with_system_prompt(self, tmp_path):
+        content = """
+model:
+  provider: openai
+  model_id: gpt-4o-2024-08-06
+  system_prompt: "You are a helpful assistant."
+
+questions:
+  - id: q1
+    prompt: "What is the rate?"
+    checks:
+      - type: contains
+        value: "5.00%"
+"""
+        path = write_yaml(tmp_path, content)
+        config = load_config(path)
+        assert config.model.system_prompt == "You are a helpful assistant."
+
+
+class TestSystemPromptValidation:
+    def test_valid_system_prompt_has_no_errors(self):
+        raw = {
+            "model": {
+                "provider": "openai",
+                "model_id": "gpt-4o-2024-08-06",
+                "system_prompt": "You are a customer service representative.",
+            },
+            "questions": VALID_QUESTIONS,
+        }
+        assert validate_raw_config(raw) == []
+
+    def test_non_string_system_prompt_rejected(self):
+        raw = {
+            "model": {"provider": "openai", "model_id": "gpt-4o-2024-08-06", "system_prompt": 123},
+            "questions": VALID_QUESTIONS,
+        }
+        errors = validate_raw_config(raw)
+        assert any("system_prompt" in e for e in errors)
+
+    def test_system_prompt_rejected_for_custom_provider(self):
+        raw = {
+            "model": {
+                "provider": "custom",
+                "model_id": "support-bot-2024-09-01",
+                "system_prompt": "You are a helpful assistant.",
+                "endpoint": {
+                    "url": "https://internal.example.com/generate",
+                    "request_template": {"input": "{{prompt}}"},
+                    "response_path": "text",
+                },
+            },
+            "questions": VALID_QUESTIONS,
+        }
+        errors = validate_raw_config(raw)
+        assert any("system_prompt" in e and "custom" in e for e in errors)

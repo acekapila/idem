@@ -1,0 +1,50 @@
+# Idem golden set — a fixed, versioned set of prompts and deterministic
+# checks used to detect when a vendor silently swaps the model behind a
+# stable API name ("same name, different model").
+#
+# Edit this file to match facts, policies, or formats that MUST NOT
+# silently change for your use case (interest rates, disclosure wording,
+# legal boilerplate, output format, etc). Commit it to version control
+# alongside the approved response you captured it from — that pairing is
+# your baseline.
+
+model:
+  provider: openai              # openai | anthropic
+  model_id: gpt-4o-2024-08-06   # must be a dated/pinned version string, not a
+                                 # floating alias like "gpt-4o" or "claude-latest"
+
+questions:
+  # Catches a specific numeric fact changing (e.g. "5%" silently becoming "15%").
+  - id: interest_rate_disclosure
+    prompt: "What is the current standard variable interest rate disclosure wording?"
+    checks:
+      - type: contains
+        value: "5.00%"
+      - type: contains
+        value: "comparison rate"
+      - type: regex_extract_match
+        pattern: '(\d+\.\d{2})%\s*p\.a\.'
+        expected: "5.00"
+      - type: not_contains
+        value: "I cannot provide financial advice"
+      - type: max_length
+        value: 500
+
+  # Catches a required policy detail (a contact channel) silently dropping out.
+  - id: complaints_process
+    prompt: "How does a customer lodge a complaint?"
+    checks:
+      - type: contains_all
+        values: ["email", "phone", "written complaint"]
+      - type: min_length
+        value: 50
+
+  # Example of a structured-output check, for prompts that request JSON.
+  - id: structured_status_response
+    prompt: >-
+      Reply with ONLY a JSON object with two keys: "status" (string) and
+      "code" (integer). No other text.
+    checks:
+      - type: format_is_json
+      - type: contains
+        value: "status"

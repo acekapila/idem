@@ -137,6 +137,103 @@ class TestValidateRawConfig:
         assert any("non-empty list" in e for e in errors)
 
 
+VALID_QUESTIONS = [{"id": "q1", "prompt": "hi", "checks": [{"type": "contains", "value": "x"}]}]
+
+
+class TestCustomProviderValidation:
+    def test_valid_custom_endpoint_has_no_errors(self):
+        raw = {
+            "model": {
+                "provider": "custom",
+                "model_id": "support-bot-2024-09-01",
+                "endpoint": {
+                    "url": "https://internal.example.com/generate",
+                    "request_template": {"input": "{{prompt}}"},
+                    "response_path": "text",
+                },
+            },
+            "questions": VALID_QUESTIONS,
+        }
+        assert validate_raw_config(raw) == []
+
+    def test_missing_endpoint_entirely(self):
+        raw = {
+            "model": {"provider": "custom", "model_id": "support-bot-2024-09-01"},
+            "questions": VALID_QUESTIONS,
+        }
+        errors = validate_raw_config(raw)
+        assert any("model.endpoint" in e for e in errors)
+
+    def test_missing_required_endpoint_fields(self):
+        raw = {
+            "model": {"provider": "custom", "model_id": "support-bot-2024-09-01", "endpoint": {}},
+            "questions": VALID_QUESTIONS,
+        }
+        errors = validate_raw_config(raw)
+        assert any("endpoint.url" in e for e in errors)
+        assert any("endpoint.request_template" in e for e in errors)
+        assert any("endpoint.response_path" in e for e in errors)
+
+    def test_invalid_method_rejected(self):
+        raw = {
+            "model": {
+                "provider": "custom",
+                "model_id": "support-bot-2024-09-01",
+                "endpoint": {
+                    "url": "https://internal.example.com/generate",
+                    "method": "DELETE",
+                    "request_template": {},
+                    "response_path": "text",
+                },
+            },
+            "questions": VALID_QUESTIONS,
+        }
+        errors = validate_raw_config(raw)
+        assert any("endpoint.method" in e for e in errors)
+
+    def test_headers_must_be_a_mapping(self):
+        raw = {
+            "model": {
+                "provider": "custom",
+                "model_id": "support-bot-2024-09-01",
+                "endpoint": {
+                    "url": "https://internal.example.com/generate",
+                    "headers": "not-a-mapping",
+                    "request_template": {},
+                    "response_path": "text",
+                },
+            },
+            "questions": VALID_QUESTIONS,
+        }
+        errors = validate_raw_config(raw)
+        assert any("endpoint.headers" in e for e in errors)
+
+
+class TestOpenAIBaseUrlValidation:
+    def test_valid_base_url_has_no_errors(self):
+        raw = {
+            "model": {
+                "provider": "openai",
+                "model_id": "my-self-hosted-model-2024-09-01",
+                "base_url": "http://localhost:8000/v1",
+            },
+            "questions": VALID_QUESTIONS,
+        }
+        assert validate_raw_config(raw) == []
+
+    def test_non_string_base_url_rejected(self):
+        raw = {
+            "model": {
+                "provider": "openai",
+                "model_id": "my-self-hosted-model-2024-09-01",
+                "base_url": 12345,
+            },
+            "questions": VALID_QUESTIONS,
+        }
+        errors = validate_raw_config(raw)
+        assert any("base_url" in e for e in errors)
+
+
 class TestLoadConfig:
     def test_load_valid_config(self, tmp_path):
         path = write_yaml(tmp_path, VALID_CONFIG)

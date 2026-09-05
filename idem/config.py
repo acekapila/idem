@@ -16,7 +16,11 @@ import yaml
 
 from idem.checks import CHECK_REGISTRY
 
-SUPPORTED_PROVIDERS = {"openai", "anthropic"}
+SUPPORTED_PROVIDERS = {"openai", "anthropic", "custom"}
+
+# Required fields on model.endpoint when provider is 'custom'.
+REQUIRED_ENDPOINT_FIELDS = ["url", "request_template", "response_path"]
+VALID_ENDPOINT_METHODS = {"GET", "POST", "PUT"}
 
 # Required fields per check type, used for clear "missing field" errors
 # during validation (before any check ever runs against a live response).
@@ -63,6 +67,8 @@ class ConfigError(ValueError):
 class ModelConfig:
     provider: str
     model_id: str
+    base_url: str | None = None  # openai only: point at a self-hosted, OpenAI-compatible server
+    endpoint: dict[str, Any] | None = None  # custom only: how to call the REST API
 
 
 @dataclass
@@ -81,6 +87,35 @@ class Config:
 def is_floating_alias(model_id: str) -> bool:
     """Heuristic check for un-pinned/floating model identifiers."""
     return any(re.match(pat, model_id) for pat in _FLOATING_ALIAS_PATTERNS)
+
+
+def _validate_endpoint(endpoint: Any) -> list[str]:
+    errors = []
+    if not isinstance(endpoint, dict):
+        return ["'model.endpoint' is required and must be a mapping when provider is 'custom'"]
+
+    for field in REQUIRED_ENDPOINT_FIELDS:
+        if not endpoint.get(field):
+            errors.append(f"'model.endpoint.{field}' is required for provider 'custom'")
+
+    method = endpoint.get("method", "POST")
+    if method not in VALID_ENDPOINT_METHODS:
+        errors.append(
+            f"'model.endpoint.method' must be one of {sorted(VALID_ENDPOINT_METHODS)}, got {method!r}"
+        )
+
+    headers = endpoint.get("headers")
+    if headers is not None and not isinstance(headers, dict):
+        errors.append("'model.endpoint.headers' must be a mapping of header name to value")
+
+    timeout = endpoint.get("timeout")
+    if timeout is not None and not isinstance(timeout, (int, float)):
+        errors.append("'model.endpoint.timeout' must be a number (seconds)")
+
+    if "response_path" in endpoint and not isinstance(endpoint["response_path"], str):
+        errors.append("'model.endpoint.response_path' must be a dotted string, e.g. 'choices.0.message.content'")
+
+    return errors
 
 
 def _validate_check(check: Any, question_idx: int, check_idx: int) -> list[str]:
@@ -147,7 +182,9 @@ def validate_raw_config(raw: Any) -> list[str]:
         provider = model.get("provider")
         model_id = model.get("model_id")
         if not provider:
-            errors.append("'model.provider' is required (must be 'openai' or 'anthropic')")
+            errors.append(
+                f"'model.provider' is required (must be one of {sorted(SUPPORTED_PROVIDERS)})"
+            )
         elif provider not in SUPPORTED_PROVIDERS:
             errors.append(
                 f"'model.provider' must be one of {sorted(SUPPORTED_PROVIDERS)}, "
@@ -161,6 +198,11 @@ def validate_raw_config(raw: Any) -> list[str]:
                 "not a dated/pinned version (e.g. use 'gpt-4o-2024-08-06' instead "
                 "of 'gpt-4o'). Pin an exact, dated model version."
             )
+
+        if provider == "openai" and "base_url" in model and not isinstance(model["base_url"], str):
+            errors.append("'model.base_url' must be a string")
+        elif provider == "custom":
+            errors.extend(_validate_endpoint(model.get("endpoint")))
 
     questions = raw.get("questions")
     if questions is None:
@@ -223,7 +265,13 @@ def load_config(path: str | Path) -> Config:
     if errors:
         raise ConfigError(errors)
 
-    model = ModelConfig(provider=raw["model"]["provider"], model_id=str(raw["model"]["model_id"]))
+    raw_model = raw["model"]
+    model = ModelConfig(
+        provider=raw_model["provider"],
+        model_id=str(raw_model["model_id"]),
+        base_url=raw_model.get("base_url"),
+        endpoint=raw_model.get("endpoint"),
+    )
     questions = [
         Question(id=q["id"], prompt=q["prompt"], checks=q["checks"])
         for q in raw["questions"]

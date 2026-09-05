@@ -1,0 +1,53 @@
+# Example golden set for a self-hosted / internally-trained model,
+# e.g. a fine-tuned customer-support model behind your own API.
+#
+# Two options depending on how the model is served — see the README's
+# "Testing a custom or self-hosted model" section for the full writeup.
+
+# --- Option 1: the server speaks the OpenAI chat-completions protocol ---
+# (true for vLLM, Ollama, Text Generation Inference, LM Studio, and most
+# self-hosting frameworks). Just point the openai provider at it:
+#
+# model:
+#   provider: openai
+#   model_id: support-bot-2024-09-01   # the model name your server expects
+#   base_url: "http://localhost:8000/v1"
+#
+# No OPENAI_API_KEY is required when base_url is set — most self-hosted
+# servers don't check it. Set one anyway if yours does.
+
+# --- Option 2: a fully custom REST API with its own request/response shape ---
+model:
+  provider: custom
+  model_id: support-bot-2024-09-01   # your own internal name/version for this checkpoint
+  endpoint:
+    url: "https://internal-api.example.com/v1/generate"
+    method: POST                                  # optional, default: POST
+    headers:
+      Authorization: "Bearer ${CUSTOM_API_KEY}"    # ${VAR} is read from the environment at call time
+    request_template:
+      # Sent as the JSON request body. "{{prompt}}" is replaced with each
+      # question's prompt text wherever it appears, at any nesting depth.
+      model: "support-bot-2024-09-01"
+      messages:
+        - role: user
+          content: "{{prompt}}"
+    response_path: "choices.0.message.content"     # dotted path to the response text in the JSON reply
+    timeout: 30                                    # optional, seconds, default: 30
+
+questions:
+  - id: refund_policy
+    prompt: "What is our refund policy for a customer returning an item after 20 days?"
+    checks:
+      - type: contains
+        value: "30-day"
+      - type: not_contains
+        value: "no refunds"
+      - type: min_length
+        value: 40
+
+  - id: escalation_process
+    prompt: "How does a customer escalate to a human agent?"
+    checks:
+      - type: contains_any
+        values: ["human agent", "live agent", "representative"]

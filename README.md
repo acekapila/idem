@@ -102,7 +102,7 @@ each with one or more checks against the response:
 
 ```yaml
 model:
-  provider: openai              # openai | anthropic
+  provider: openai              # openai | anthropic | custom
   model_id: gpt-4o-2024-08-06   # must be a dated/pinned version string
 
 questions:
@@ -125,6 +125,60 @@ nothing stable left to compare against.
 
 See [`examples/golden_set.yaml`](examples/golden_set.yaml) for a complete,
 commented example.
+
+## Testing a custom or self-hosted model
+
+Idem isn't limited to the public OpenAI/Anthropic APIs — it can also point
+at a model you trained and host yourself (e.g. a fine-tuned customer-support
+model behind an internal API). Which setup you use depends on how your
+model is served:
+
+**If your server speaks the OpenAI chat-completions protocol** — true for
+vLLM, Ollama, Text Generation Inference, LM Studio, and most self-hosting
+frameworks — point the `openai` provider at it with `base_url`:
+
+```yaml
+model:
+  provider: openai
+  model_id: support-bot-2024-09-01     # the name/tag your server expects
+  base_url: "http://localhost:8000/v1"
+```
+
+`OPENAI_API_KEY` is not required when `base_url` is set, since most
+self-hosted servers don't check it — set one anyway if yours does.
+
+**If it's a fully custom REST API** with its own request/response shape,
+use the `custom` provider. You describe the whole HTTP call declaratively —
+no code to write:
+
+```yaml
+model:
+  provider: custom
+  model_id: support-bot-2024-09-01   # your own internal name/version for this checkpoint
+  endpoint:
+    url: "https://internal-api.example.com/v1/generate"
+    method: POST                                 # optional, default: POST
+    headers:
+      Authorization: "Bearer ${CUSTOM_API_KEY}"  # ${VAR} read from the environment at call time
+    request_template:
+      # Sent as the JSON body. "{{prompt}}" is replaced with the question's
+      # prompt text wherever it appears, at any nesting depth.
+      messages:
+        - role: user
+          content: "{{prompt}}"
+    response_path: "choices.0.message.content"   # dotted path to the response text in the JSON reply
+    timeout: 30                                  # optional, seconds, default: 30
+```
+
+`response_path` walks the parsed JSON response with dot-separated segments;
+a numeric segment indexes into a list (`choices.0...`). If the model's
+response comes back somewhere idem can't reach with a dotted path, or in a
+format other than JSON, that's a sign the response needs to be normalized
+before it reaches idem — this stays a thin, declarative HTTP client, not a
+place for per-vendor parsing logic.
+
+See [`examples/custom_endpoint_golden_set.yaml`](examples/custom_endpoint_golden_set.yaml)
+for both options side by side.
 
 ## Check-type reference
 

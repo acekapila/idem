@@ -126,66 +126,42 @@ nothing stable left to compare against.
 See [`examples/golden_set.yaml`](examples/golden_set.yaml) for a complete,
 commented example.
 
-## Testing a custom or self-hosted model
+## Which testing scenario is yours?
 
-Idem isn't limited to the public OpenAI/Anthropic APIs — it can also point
-at a model you trained and host yourself (e.g. a fine-tuned customer-support
-model behind an internal API). Which setup you use depends on how your
-model is served:
+"Testing an LLM" means different things depending on what you're actually
+pointing idem at. These are the five setups idem supports — find yours,
+then jump to that section:
 
-**If your server speaks the OpenAI chat-completions protocol** — true for
-vLLM, Ollama, Text Generation Inference, LM Studio, and most self-hosting
-frameworks — point the `openai` provider at it with `base_url`:
+| # | Your situation | `provider` to use |
+|---|---|---|
+| 1 | You call OpenAI or Anthropic directly, no extra instructions | `openai` / `anthropic` |
+| 2 | You're building your own agent: a base model + a system prompt/policy text that *you* write and control | `openai` / `anthropic` with `system_prompt` |
+| 3 | You (or your company) self-host a model on a server that speaks the OpenAI API format (vLLM, Ollama, LM Studio, TGI) | `openai` with `base_url` |
+| 4 | You (or your company) have a fully custom internal API with its own request/response shape, and *you also control* any system prompt it uses | `custom` |
+| 5 | You're testing an **already-built product** — a chatbot, an internal tool, a vendor's API — where the system prompt and knowledge base are configured on *their* side, not yours, and you only get to ask questions and read answers | `custom` (no `system_prompt`) |
+
+The `questions:` and `checks:` section of your YAML is identical in every
+case — only the `model:` block at the top changes.
+
+### 1. A public model, called directly
+
+The baseline case — see [The golden-set format](#the-golden-set-format)
+above. You call OpenAI or Anthropic with just the question, no system
+prompt, no wrapper:
 
 ```yaml
 model:
   provider: openai
-  model_id: support-bot-2024-09-01     # the name/tag your server expects
-  base_url: "http://localhost:8000/v1"
+  model_id: gpt-4o-2024-08-06
 ```
 
-`OPENAI_API_KEY` is not required when `base_url` is set, since most
-self-hosted servers don't check it — set one anyway if yours does.
-
-**If it's a fully custom REST API** with its own request/response shape,
-use the `custom` provider. You describe the whole HTTP call declaratively —
-no code to write:
-
-```yaml
-model:
-  provider: custom
-  model_id: support-bot-2024-09-01   # your own internal name/version for this checkpoint
-  endpoint:
-    url: "https://internal-api.example.com/v1/generate"
-    method: POST                                 # optional, default: POST
-    headers:
-      Authorization: "Bearer ${CUSTOM_API_KEY}"  # ${VAR} read from the environment at call time
-    request_template:
-      # Sent as the JSON body. "{{prompt}}" is replaced with the question's
-      # prompt text wherever it appears, at any nesting depth.
-      messages:
-        - role: user
-          content: "{{prompt}}"
-    response_path: "choices.0.message.content"   # dotted path to the response text in the JSON reply
-    timeout: 30                                  # optional, seconds, default: 30
-```
-
-`response_path` walks the parsed JSON response with dot-separated segments;
-a numeric segment indexes into a list (`choices.0...`). If the model's
-response comes back somewhere idem can't reach with a dotted path, or in a
-format other than JSON, that's a sign the response needs to be normalized
-before it reaches idem — this stays a thin, declarative HTTP client, not a
-place for per-vendor parsing logic.
-
-See [`examples/custom_endpoint_golden_set.yaml`](examples/custom_endpoint_golden_set.yaml)
-for both options side by side.
-
-## Testing an agent (base model + system prompt)
+### 2. Your own agent: base model + a system prompt you control
 
 Most production "customer-facing AI agents" aren't fine-tuned models at
 all — they're a general-purpose model plus a fixed system prompt that
-encodes the persona, policies, and facts. Idem supports this directly with
-`system_prompt` on the `openai` or `anthropic` provider:
+encodes the persona, policies, and facts. Use this when *you* are the one
+writing that system prompt (you're building the agent, not just testing
+someone else's):
 
 ```yaml
 model:
@@ -210,9 +186,107 @@ This is arguably the more realistic drift scenario to test for: the system
 prompt in your YAML never changes, but if the model underneath
 `gpt-4o-mini-2024-07-18` is ever silently retrained or swapped, its
 adherence to that same fixed prompt can still shift — which is exactly
-what idem is built to catch. (`system_prompt` isn't used with `provider:
-custom` — build the system message directly into `endpoint.request_template`
-there, since you already control the full request shape.)
+what idem is built to catch. `system_prompt` works the same way on
+`anthropic` (passed as Claude's native `system` parameter). It isn't used
+with `provider: custom` — see scenario 4 below.
+
+### 3. A self-hosted, OpenAI-compatible model server
+
+If your server speaks the OpenAI chat-completions protocol — true for
+vLLM, Ollama, Text Generation Inference, LM Studio, and most self-hosting
+frameworks — point the `openai` provider at it with `base_url`:
+
+```yaml
+model:
+  provider: openai
+  model_id: support-bot-2024-09-01     # the name/tag your server expects
+  base_url: "http://localhost:8000/v1"
+  system_prompt: "..."                 # optional — same as scenario 2, if you also control the prompt
+```
+
+`OPENAI_API_KEY` is not required when `base_url` is set, since most
+self-hosted servers don't check it — set one anyway if yours does.
+
+### 4. A fully custom internal API (you control the whole request)
+
+If it's a fully custom REST API with its own request/response shape, and
+you're the one deciding what gets sent (including any system message),
+use the `custom` provider. You describe the whole HTTP call declaratively —
+no code to write:
+
+```yaml
+model:
+  provider: custom
+  model_id: support-bot-2024-09-01   # your own internal name/version for this checkpoint
+  endpoint:
+    url: "https://internal-api.example.com/v1/generate"
+    method: POST                                 # optional, default: POST
+    headers:
+      Authorization: "Bearer ${CUSTOM_API_KEY}"  # ${VAR} read from the environment at call time
+    request_template:
+      # Sent as the JSON body. "{{prompt}}" is replaced with the question's
+      # prompt text wherever it appears, at any nesting depth. Add a system
+      # message here (as its own list entry) if you want one — there's no
+      # separate system_prompt field for this provider, since you already
+      # control the full message list.
+      messages:
+        - role: system
+          content: "You are a customer service representative for Acme Bank..."
+        - role: user
+          content: "{{prompt}}"
+    response_path: "choices.0.message.content"   # dotted path to the response text in the JSON reply
+    timeout: 30                                  # optional, seconds, default: 30
+```
+
+`response_path` walks the parsed JSON response with dot-separated segments;
+a numeric segment indexes into a list (`choices.0...`). If the model's
+response comes back somewhere idem can't reach with a dotted path, or in a
+format other than JSON, that's a sign the response needs to be normalized
+before it reaches idem — this stays a thin, declarative HTTP client, not a
+place for per-vendor parsing logic.
+
+See [`examples/custom_endpoint_golden_set.yaml`](examples/custom_endpoint_golden_set.yaml)
+for scenarios 3 and 4 side by side.
+
+### 5. An already-deployed chatbot or product (black box)
+
+This is the most common real-world use case: you're not building the
+agent, you're testing one that already exists — a bank's live chatbot, an
+internal support tool, a vendor's product. Its system prompt and knowledge
+base are configured on *their* side, and you never see or touch them. You
+just ask questions the way a real customer would, and check the answers:
+
+```yaml
+model:
+  provider: custom
+  model_id: bank-chatbot-v1          # your own label for whatever is live today
+  endpoint:
+    url: "https://banks-chatbot-api.example.com/ask"
+    headers:
+      Authorization: "Bearer ${BANK_API_KEY}"
+    request_template:
+      # Only the question goes here — no system message, because the
+      # chatbot already has its own built in on its end.
+      question: "{{prompt}}"
+    response_path: "answer"          # match whatever field name their API actually returns
+
+questions:
+  - id: interest_rate_disclosure
+    prompt: "What is the current standard variable interest rate?"
+    checks:
+      - type: contains
+        value: "5.00%"
+```
+
+Notice there's no `system_prompt` field and no system message in
+`request_template` — idem sends only the question, exactly like a customer
+would, and checks whatever comes back. This treats the chatbot as a sealed
+box on purpose: whatever changes on the inside (their model, their prompt,
+their knowledge base), idem only cares whether the final, customer-facing
+answer still matches what was approved.
+
+See [`examples/black_box_chatbot_golden_set.yaml`](examples/black_box_chatbot_golden_set.yaml)
+for a complete, ready-to-adapt version of this scenario.
 
 ## Check-type reference
 

@@ -1,0 +1,65 @@
+# Testing an already-deployed chatbot or product as a black box.
+#
+# Use this when you are NOT the one who built the agent — you're testing
+# a live product (a bank's chatbot, an internal support tool, a vendor's
+# API) whose system prompt and knowledge base are configured on THEIR
+# side. You never see or control that setup; you just ask questions the
+# way a real customer would, and check the answers that come back.
+#
+# The key difference from custom_endpoint_golden_set.yaml: there is no
+# system_prompt field and no system message in request_template. Only
+# the question goes out — idem sends exactly what a real user would send.
+#
+# Run:
+#   export BANK_API_KEY=...
+#   idem validate --config black_box_chatbot_golden_set.yaml
+#   idem run --config black_box_chatbot_golden_set.yaml --output-dir ./reports
+
+model:
+  provider: custom
+  model_id: bank-chatbot-v1   # your own label for "whatever is live today" — you don't control their versioning
+  endpoint:
+    url: "https://banks-chatbot-api.example.com/ask"
+    method: POST
+    headers:
+      Authorization: "Bearer ${BANK_API_KEY}"
+    request_template:
+      # Only the customer's question. No system message — the chatbot
+      # already has its own, configured on the bank's side.
+      question: "{{prompt}}"
+    response_path: "answer"   # change this to match whatever field name their API actually returns
+    timeout: 30
+
+questions:
+  - id: interest_rate_disclosure
+    prompt: "What is the current standard variable interest rate?"
+    checks:
+      - type: contains
+        value: "5.00%"
+      - type: contains
+        value: "comparison rate"
+      - type: regex_extract_match
+        pattern: '(\d+\.\d{2})%\s*p\.a\.'
+        expected: "5.00"
+      - type: not_contains
+        value: "I cannot provide financial advice"
+
+  - id: complaints_process
+    prompt: "How does a customer lodge a complaint?"
+    checks:
+      - type: contains_all
+        values: ["email", "phone", "written complaint"]
+      - type: min_length
+        value: 50
+
+  - id: refund_policy
+    prompt: "What is your refund policy?"
+    checks:
+      - type: contains
+        value: "30-day"
+
+  - id: escalation_process
+    prompt: "How does a customer escalate to a human agent?"
+    checks:
+      - type: contains_any
+        values: ["human agent", "live agent", "representative"]

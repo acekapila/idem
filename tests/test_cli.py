@@ -180,3 +180,35 @@ class TestRunCommand:
 
         lines = (output_dir / "audit_log.jsonl").read_text().strip().splitlines()
         assert len(lines) == 2
+
+
+class TestGuiCommand:
+    def test_missing_streamlit_exits_error(self, monkeypatch, capsys):
+        import sys
+
+        monkeypatch.setitem(sys.modules, "streamlit", None)
+
+        code = cli.main(["gui"])
+
+        assert code == exit_codes.ERROR
+        assert "streamlit" in capsys.readouterr().err.lower()
+
+    def test_launches_streamlit_subprocess(self, monkeypatch):
+        pytest.importorskip("streamlit")
+        captured_args = {}
+
+        class FakeCompletedProcess:
+            returncode = 0
+
+        def fake_run(args):
+            captured_args["args"] = args
+            return FakeCompletedProcess()
+
+        monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+        code = cli.main(["gui"])
+
+        assert code == exit_codes.OK
+        assert captured_args["args"][0] == "streamlit"
+        assert captured_args["args"][1] == "run"
+        assert captured_args["args"][2].endswith("app.py")

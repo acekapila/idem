@@ -1,10 +1,12 @@
 """The `idem` command-line interface.
 
-Three subcommands:
+Four subcommands:
 
 - `idem run`      — call the pinned model and check its responses.
 - `idem validate` — validate a golden-set YAML file without calling any API.
 - `idem init`      — scaffold an example golden-set YAML file.
+- `idem gui`       — launch the optional local web GUI (requires the
+                      `gui` extra: `pip install idem-check[gui]`).
 
 Exit codes (see idem.exit_codes): 0 = all checks passed, 1 = at least
 one check failed, 2 = a configuration or runtime error prevented the
@@ -15,13 +17,14 @@ from __future__ import annotations
 
 import argparse
 import importlib.resources
+import subprocess
 import sys
 from pathlib import Path
 
 from idem import exit_codes
-from idem.audit_log import QuestionRunResult, append_jsonl, write_markdown_report
-from idem.checks import CheckConfigError, run_check
+from idem.audit_log import append_jsonl, write_markdown_report
 from idem.config import ConfigError, load_config, load_raw_yaml, validate_raw_config
+from idem.runner import run_questions
 from idem.target import TargetError, create_target
 
 
@@ -51,6 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         default="golden_set.yaml",
         help="Path to write the example config to (default: ./golden_set.yaml)",
+    )
+
+    subparsers.add_parser(
+        "gui", help="Launch the local web GUI (requires `pip install idem-check[gui]`)"
     )
 
     return parser
@@ -107,63 +114,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     jsonl_path = output_dir / "audit_log.jsonl"
     report_path = output_dir / "report.md"
 
-    results: list[QuestionRunResult] = []
-    had_runtime_error = False
-
-    for question in config.questions:
-        try:
-            raw_response = target.call(question.prompt)
-        except TargetError as exc:
-            print(f"ERROR: question '{question.id}' failed to call model: {exc}", file=sys.stderr)
-            had_runtime_error = True
-            results.append(
-                QuestionRunResult(
-                    question_id=question.id,
-                    model_id=config.model.model_id,
-                    provider=config.model.provider,
-                    prompt=question.prompt,
-                    raw_response="",
-                    check_results=[],
-                    check_configs=question.checks,
-                    error=str(exc),
-                )
-            )
-            continue
-
-        try:
-            check_results = [run_check(raw_response, check) for check in question.checks]
-        except CheckConfigError as exc:
-            # Should be unreachable if `idem validate` passed on this file,
-            # but treated as a hard runtime error rather than a check failure.
-            print(f"ERROR: question '{question.id}' has an invalid check: {exc}", file=sys.stderr)
-            had_runtime_error = True
-            results.append(
-                QuestionRunResult(
-                    question_id=question.id,
-                    model_id=config.model.model_id,
-                    provider=config.model.provider,
-                    prompt=question.prompt,
-                    raw_response=raw_response,
-                    check_results=[],
-                    check_configs=question.checks,
-                    error=str(exc),
-                )
-            )
-            continue
-
-        result = QuestionRunResult(
-            question_id=question.id,
-            model_id=config.model.model_id,
-            provider=config.model.provider,
-            prompt=question.prompt,
-            raw_response=raw_response,
-            check_results=check_results,
-            check_configs=question.checks,
-        )
-        results.append(result)
-
+    def on_result(result):
+        if result.error:
+            print(f"ERROR: question '{result.question_id}': {result.error}", file=sys.stderr)
         status = "PASS" if result.overall_passed else "FAIL"
-        print(f"[{status}] {question.id}")
+        print(f"[{status}] {result.question_id}")
+
+    results, had_runtime_error = run_questions(config, target, on_result=on_result)
 
     for result in results:
         append_jsonl(jsonl_path, result.to_record())
@@ -179,6 +136,22 @@ def cmd_run(args: argparse.Namespace) -> int:
     return exit_codes.OK
 
 
+def cmd_gui(args: argparse.Namespace) -> int:
+    try:
+        import streamlit  # noqa: F401
+    except ImportError:
+        print(
+            "ERROR: the GUI requires the 'streamlit' package. "
+            "Install it with `pip install idem-check[gui]`.",
+            file=sys.stderr,
+        )
+        return exit_codes.ERROR
+
+    app_path = importlib.resources.files("idem.gui").joinpath("app.py")
+    result = subprocess.run(["streamlit", "run", str(app_path)])
+    return exit_codes.OK if result.returncode == 0 else exit_codes.ERROR
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -189,6 +162,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_validate(args)
     if args.command == "init":
         return cmd_init(args)
+    if args.command == "gui":
+        return cmd_gui(args)
 
     parser.print_help()
     return exit_codes.ERROR
